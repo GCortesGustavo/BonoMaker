@@ -32,7 +32,6 @@ export default function NuevoBono() {
 
   const datosGrafico = useMemo(() => {
     if (!liquidacion.valido) return [];
-    // Distribución del costo total del empleador (Neto + Descuentos/Aportes Trabajador + Aportes Patronales)
     return [
       { name: 'Sueldo Neto (Trabajador)', value: liquidacion.netoTotal },
       ...liquidacion.items.filter(i => i.tipo !== 'REMUNERATIVO').map(i => ({ name: i.nombre, value: i.montoDecimal }))
@@ -56,7 +55,7 @@ export default function NuevoBono() {
   const descuentos = liquidacion.items.filter(i => i.tipo === 'DESCUENTO');
 
   return (
-    <div className="max-w-[1400px] mx-auto p-4 grid grid-cols-1 xl:grid-cols-12 gap-6 font-sans">
+    <div className="max-w-350 mx-auto p-4 grid grid-cols-1 xl:grid-cols-12 gap-6 font-sans">
       
       {/* --- FORMULARIO LATERAL --- */}
       <div className="xl:col-span-3 bg-white p-6 rounded-lg shadow-md border border-gray-200 overflow-y-auto max-h-[90vh]">
@@ -83,7 +82,7 @@ export default function NuevoBono() {
             <div><label className="block font-medium">Antigüedad</label><input type="text" name="antiguedad" value={datos.antiguedad} onChange={handleChange} className="w-full p-2 border rounded"/></div>
           </div>
           <div><label className="block font-medium">Categoría</label><input type="text" name="categoria" value={datos.categoria} onChange={handleChange} className="w-full p-2 border rounded"/></div>
-          <div><label className="block font-medium font-bold text-blue-700">Sueldo Bruto ($)</label><input type="number" name="bruto" value={datos.bruto} onChange={handleChange} className="w-full p-2 border-2 border-blue-400 rounded bg-blue-50"/></div>
+          <div><label className="block font-bold text-blue-700">Sueldo Bruto ($)</label><input type="number" name="bruto" value={datos.bruto} onChange={handleChange} className="w-full p-2 border-2 border-blue-400 rounded bg-blue-50"/></div>
         </div>
 
         <button onClick={handleDescargar} disabled={!liquidacion.valido || !datos.empleado} className="w-full mt-6 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-md flex items-center justify-center gap-2">
@@ -91,9 +90,9 @@ export default function NuevoBono() {
         </button>
       </div>
 
-      {/* --- VISTA PREVIA DEL RECIBO (EXACTAMENTE COMO LA IMAGEN) --- */}
+      {/* --- VISTA PREVIA DEL RECIBO --- */}
       <div className="xl:col-span-9 bg-gray-50 p-4 flex justify-center overflow-x-auto">
-        <div id="recibo-imprimible" className="bg-white w-[900px] min-w-[900px] shadow-xl p-6 border border-gray-300 text-xs text-black" style={{ fontFamily: 'Arial, sans-serif' }}>
+        <div id="recibo-imprimible" className="bg-white w-225 min-w-225 shadow-xl p-6 border border-gray-300 text-xs text-black" style={{ fontFamily: 'Arial, sans-serif' }}>
           
           {/* Encabezado Empresa */}
           <div className="border border-black p-2 font-bold uppercase mb-2">
@@ -157,7 +156,6 @@ export default function NuevoBono() {
                   <td className="border-l border-r border-black p-1 text-right">{formatearMoneda(item.montoDecimal)}</td>
                 </tr>
               ))}
-              {/* Filas de relleno para estética */}
               <tr><td className="border-l border-r border-black p-4"></td><td className="border-l border-r border-black"></td><td className="border-l border-r border-black"></td><td className="border-l border-r border-black"></td></tr>
             </tbody>
             <tfoot>
@@ -228,7 +226,6 @@ export default function NuevoBono() {
             
             <div className="flex flex-col items-center">
               <h3 className="font-bold text-sm">Costo total empleador</h3>
-              {/* Importante: isAnimationActive={false} para que html2canvas pueda tomar la foto del gráfico */}
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie data={datosGrafico} cx="50%" cy="50%" outerRadius={70} dataKey="value" isAnimationActive={false}>
@@ -236,7 +233,8 @@ export default function NuevoBono() {
                       <Cell key={`cell-${index}`} fill={COLORES[index % COLORES.length]} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(value: number) => formatearMoneda(value)} />
+                  {/* Solución de tipado al formateador del Tooltip */}
+                  <Tooltip formatter={(value: any) => formatearMoneda(Number(value))} />
                   <Legend wrapperStyle={{ fontSize: '10px' }} />
                 </PieChart>
               </ResponsiveContainer>
