@@ -10,6 +10,7 @@ import type {
   TipoConcepto,
 } from "../types/bono";
 import { formatearPorcentaje } from "./formato";
+
 export { formatearMoneda } from "./formato";
 
 // Todo el cálculo se hace en centavos enteros para evitar errores de coma flotante.

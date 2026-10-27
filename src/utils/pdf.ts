@@ -572,28 +572,47 @@ const dibujarRecibo = (
   return y - Y0;
 };
 
+export interface ReciboParaPDF {
+  datos: DatosFormulario;
+  liq: ResultadoLiquidacion;
+}
+
+/** Genera un PDF con un recibo por hoja (un solo recibo = un PDF de una página). */
+export const crearPDFMultiple = (
+  recibos: ReciboParaPDF[],
+  convenio: Convenio | undefined,
+): jsPDF => {
+  const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+  recibos.forEach(({ datos, liq }, i) => {
+    // Primera pasada (en un documento descartable) para medir el alto y ajustar la escala.
+    const medidor = new jsPDF({ unit: "mm", format: "a4" });
+    const altoNatural = dibujarRecibo(medidor, datos, liq, convenio, 1);
+    const k =
+      altoNatural > ALTO_DISPONIBLE
+        ? Math.max(0.55, ALTO_DISPONIBLE / altoNatural)
+        : 1;
+    if (i > 0) doc.addPage();
+    dibujarRecibo(doc, datos, liq, convenio, k);
+  });
+  const primero = recibos[0]?.datos;
+  if (primero) {
+    doc.setProperties({
+      title:
+        recibos.length === 1
+          ? `Recibo de haberes - ${primero.empleado}`
+          : `Recibos de haberes - ${primero.mes} ${primero.anio}`,
+      subject: `${primero.mes} ${primero.anio}`,
+      author: primero.empresa,
+    });
+  }
+  return doc;
+};
+
 export const crearPDF = (
   datos: DatosFormulario,
   liq: ResultadoLiquidacion,
   convenio: Convenio | undefined,
-): jsPDF => {
-  // Primera pasada (en un documento descartable) para medir el alto y ajustar la escala.
-  const medidor = new jsPDF({ unit: "mm", format: "a4" });
-  const altoNatural = dibujarRecibo(medidor, datos, liq, convenio, 1);
-  const k =
-    altoNatural > ALTO_DISPONIBLE
-      ? Math.max(0.55, ALTO_DISPONIBLE / altoNatural)
-      : 1;
-
-  const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
-  doc.setProperties({
-    title: `Recibo de haberes - ${datos.empleado}`,
-    subject: `${datos.mes} ${datos.anio}`,
-    author: datos.empresa,
-  });
-  dibujarRecibo(doc, datos, liq, convenio, k);
-  return doc;
-};
+): jsPDF => crearPDFMultiple([{ datos, liq }], convenio);
 
 export const nombreArchivoBono = (datos: DatosFormulario): string => {
   const limpio = (s: string) =>

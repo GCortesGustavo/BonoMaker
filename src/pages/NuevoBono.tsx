@@ -4,6 +4,7 @@ import { calcularLiquidacion } from "../utils/calculadora";
 import { crearPDF, nombreArchivoBono } from "../utils/pdf";
 import { formatearMoneda, MESES_ANIO } from "../utils/formato";
 import type { Convenio, DatosFormulario } from "../types/bono";
+import PanelLote from "./PanelLote";
 
 interface Props {
   convenios: Convenio[];
@@ -68,6 +69,7 @@ function Seccion({ titulo, children }: { titulo: string; children: React.ReactNo
 export default function NuevoBono({ convenios }: Props) {
   const [convenioId, setConvenioId] = useState(convenios[0]?.id || "");
   const [datos, setDatos] = useState<DatosFormulario>(datosIniciales);
+  const [urlPDF, setUrlPDF] = useState<string | null>(null);
 
   const convenio = convenios.find((c) => c.id === convenioId) ?? convenios[0];
   const porHora = convenio?.unidadBasico === "HORAS";
@@ -94,17 +96,6 @@ export default function NuevoBono({ convenios }: Props) {
     );
   }, [datos, convenio]);
 
-  const [urlPDF, setUrlPDF] = useState<{
-    url: string;
-    datos: DatosFormulario;
-    liquidacion: typeof liquidacion;
-    convenio: Convenio | undefined;
-  } | null>(null);
-  const vistaPreviaPDF = liquidacion.valido && urlPDF?.datos === datos &&
-    urlPDF.liquidacion === liquidacion && urlPDF.convenio === convenio
-    ? urlPDF.url
-    : null;
-
   // Recuerda los datos de la empresa para la próxima vez.
   useEffect(() => {
     const { empresa, domicilio, cuit, lugar, banco } = datos;
@@ -113,11 +104,14 @@ export default function NuevoBono({ convenios }: Props) {
 
   // Vista previa: es el mismo PDF que se descarga.
   useEffect(() => {
-    if (!liquidacion.valido) return;
     let url: string | null = null;
     const t = setTimeout(() => {
+      if (!liquidacion.valido) {
+        setUrlPDF(null);
+        return;
+      }
       url = URL.createObjectURL(crearPDF(datos, liquidacion, convenio).output("blob"));
-      setUrlPDF({ url, datos, liquidacion, convenio });
+      setUrlPDF(url);
     }, 250);
     return () => {
       clearTimeout(t);
@@ -263,14 +257,16 @@ export default function NuevoBono({ convenios }: Props) {
           </button>
         </div>
 
-        {vistaPreviaPDF && (
-          <a href={vistaPreviaPDF} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline -mb-2">
+        <PanelLote datos={datos} convenio={convenio} />
+
+        {urlPDF && (
+          <a href={urlPDF} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline -mb-2">
             ¿No ves la vista previa? Abrir el PDF en una pestaña nueva
           </a>
         )}
         <div className="bg-gray-200 rounded-lg border border-gray-300 overflow-hidden h-[80vh]">
-          {vistaPreviaPDF ? (
-            <iframe title="Vista previa del recibo" src={`${vistaPreviaPDF}#view=FitH`} className="w-full h-full bg-white" />
+          {urlPDF ? (
+            <iframe title="Vista previa del recibo" src={`${urlPDF}#view=FitH`} className="w-full h-full bg-white" />
           ) : (
             <div className="h-full flex items-center justify-center text-gray-500 text-sm">Sin vista previa</div>
           )}
