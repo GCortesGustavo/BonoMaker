@@ -1,248 +1,290 @@
-import React, { useState, useMemo } from 'react';
-import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Download } from 'lucide-react';
-import { conveniosData } from '../data/convenios';
-import { calcularLiquidacion, formatearMoneda } from '../utils/calculadora';
-import type { DatosFormulario } from '../types/bono';
-import { generarPDF } from '../utils/pdf';
+import { useEffect, useMemo, useState } from "react";
+import { Download } from "lucide-react";
+import { calcularLiquidacion } from "../utils/calculadora";
+import { crearPDF, nombreArchivoBono } from "../utils/pdf";
+import { formatearMoneda, MESES_ANIO } from "../utils/formato";
+import type { Convenio, DatosFormulario } from "../types/bono";
 
-const COLORES = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#E74C3C', '#2ECC71'];
+interface Props {
+  convenios: Convenio[];
+}
 
-export default function NuevoBono() {
-  const [convenioId, setConvenioId] = useState(conveniosData[0].id);
-  const [datos, setDatos] = useState<DatosFormulario>({
-    empresa: 'Constructora del Sur S.A.',
-    cuit: '30-12345678-0',
-    mes: 'Octubre',
-    anio: '2026',
-    empleado: 'Juan Pérez',
-    legajo: '1045',
-    bruto: 800000,
-    antiguedad: '3 años',
-    fechaIngreso: '15/03/2023',
-    categoria: 'Oficial Especializado',
-    cuil: '20-35123456-8'
+const CLAVE_EMPRESA = "rrhh_empresa";
+
+const hoyISO = () => new Date().toISOString().slice(0, 10);
+
+const datosIniciales = (): DatosFormulario => {
+  const base: DatosFormulario = {
+    empresa: "BURGUEROS SAS",
+    domicilio: "Bolulogme Sur Mer 241, Mendoza.",
+    cuit: "30-71868079-0",
+    lugar: "Mendoza",
+    mes: "SEPTIEMBRE",
+    anio: "2026",
+    q: "S",
+    fechaPagoAportes: "2026-10-10",
+    fechaEmision: hoyISO(),
+    empleado: "DENARO MARIA PAZ",
+    legajo: "196",
+    antiguedad: "",
+    fechaIngreso: "2026-06-16",
+    categoria: "COCINERO",
+    cuil: "27-46662606-1",
+    banco: "MACRO",
+    valorBasico: 645000,
+    unidades: 30,
+    baseAdicionales: 495000,
+    montosFijos: {},
+  };
+  try {
+    const guardado = localStorage.getItem(CLAVE_EMPRESA);
+    if (guardado) return { ...base, ...JSON.parse(guardado) };
+  } catch {
+    /* sin datos guardados */
+  }
+  return base;
+};
+
+const claseInput = "w-full p-2 border border-gray-300 rounded text-sm outline-none focus:border-blue-500";
+
+function Campo({ label, children, className = "" }: { label: string; children: React.ReactNode; className?: string }) {
+  return (
+    <label className={`block ${className}`}>
+      <span className="block text-xs font-medium text-gray-600 mb-1">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function Seccion({ titulo, children }: { titulo: string; children: React.ReactNode }) {
+  return (
+    <section className="mb-5">
+      <h3 className="text-xs font-bold uppercase tracking-wide text-gray-500 border-b pb-1 mb-3">{titulo}</h3>
+      <div className="grid grid-cols-2 gap-3">{children}</div>
+    </section>
+  );
+}
+
+export default function NuevoBono({ convenios }: Props) {
+  const [convenioId, setConvenioId] = useState(convenios[0]?.id || "");
+  const [datos, setDatos] = useState<DatosFormulario>(datosIniciales);
+
+  const convenio = convenios.find((c) => c.id === convenioId) ?? convenios[0];
+  const porHora = convenio?.unidadBasico === "HORAS";
+
+  const fijosEditables = useMemo(
+    () =>
+      (convenio?.reglas ?? []).filter(
+        (r) => r.metodo === "MONTO_FIJO" && r.tipo !== "APORTE_PATRONAL",
+      ),
+    [convenio],
+  );
+
+  const liquidacion = useMemo(() => {
+    const montosFijos: Record<string, number> = {};
+    for (const [id, v] of Object.entries(datos.montosFijos)) if (v !== "") montosFijos[id] = Number(v);
+    return calcularLiquidacion(
+      {
+        valorBasico: Number(datos.valorBasico) || 0,
+        unidades: Number(datos.unidades) || 0,
+        baseAdicionales: Number(datos.baseAdicionales) || undefined,
+        montosFijos,
+      },
+      convenio,
+    );
+  }, [datos, convenio]);
+
+  const [urlPDF, setUrlPDF] = useState<{
+    url: string;
+    datos: DatosFormulario;
+    liquidacion: typeof liquidacion;
+    convenio: Convenio | undefined;
+  } | null>(null);
+  const vistaPreviaPDF = liquidacion.valido && urlPDF?.datos === datos &&
+    urlPDF.liquidacion === liquidacion && urlPDF.convenio === convenio
+    ? urlPDF.url
+    : null;
+
+  // Recuerda los datos de la empresa para la próxima vez.
+  useEffect(() => {
+    const { empresa, domicilio, cuit, lugar, banco } = datos;
+    localStorage.setItem(CLAVE_EMPRESA, JSON.stringify({ empresa, domicilio, cuit, lugar, banco }));
+  }, [datos.empresa, datos.domicilio, datos.cuit, datos.lugar, datos.banco]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Vista previa: es el mismo PDF que se descarga.
+  useEffect(() => {
+    if (!liquidacion.valido) return;
+    let url: string | null = null;
+    const t = setTimeout(() => {
+      url = URL.createObjectURL(crearPDF(datos, liquidacion, convenio).output("blob"));
+      setUrlPDF({ url, datos, liquidacion, convenio });
+    }, 250);
+    return () => {
+      clearTimeout(t);
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [datos, liquidacion, convenio]);
+
+  const set = <K extends keyof DatosFormulario>(campo: K, valor: DatosFormulario[K]) =>
+    setDatos((prev) => ({ ...prev, [campo]: valor }));
+
+  const texto = (campo: keyof DatosFormulario) => ({
+    value: String(datos[campo] ?? ""),
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => set(campo, e.target.value as never),
+    className: claseInput,
   });
 
-  const convenioSeleccionado = conveniosData.find(c => c.id === convenioId) || conveniosData[0];
-  
-  const liquidacion = useMemo(() => {
-    return calcularLiquidacion(Number(datos.bruto) || 0, convenioSeleccionado);
-  }, [datos.bruto, convenioSeleccionado]);
+  const numero = (campo: "valorBasico" | "unidades" | "baseAdicionales") => ({
+    type: "number" as const,
+    min: 0,
+    step: "any",
+    value: datos[campo],
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
+      set(campo, e.target.value === "" ? "" : Number(e.target.value)),
+    className: claseInput,
+  });
 
-  const datosGrafico = useMemo(() => {
-    if (!liquidacion.valido) return [];
-    return [
-      { name: 'Sueldo Neto (Trabajador)', value: liquidacion.netoTotal },
-      ...liquidacion.items.filter(i => i.tipo !== 'REMUNERATIVO').map(i => ({ name: i.nombre, value: i.montoDecimal }))
-    ];
-  }, [liquidacion]);
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setDatos(prev => ({ ...prev, [name]: name === 'bruto' ? (Number(value) || '') : value }));
+  const descargar = () => {
+    if (!liquidacion.valido || !datos.empleado) return;
+    crearPDF(datos, liquidacion, convenio).save(nombreArchivoBono(datos));
   };
 
-  const handleDescargar = async () => {
-    if (datos.empleado && liquidacion.valido) {
-      await generarPDF('recibo-imprimible', `Bono_${datos.empleado.replace(/\s+/g, '_')}`);
-    } else {
-      alert("Comprueba que ingresaste el nombre del empleado y un sueldo bruto válido.");
-    }
-  };
-
-  const aportesPatronales = liquidacion.items.filter(i => i.tipo === 'APORTE_PATRONAL');
-  const descuentos = liquidacion.items.filter(i => i.tipo === 'DESCUENTO');
+  if (convenios.length === 0 || !convenio) {
+    return <div className="text-center p-10">No hay convenios cargados. Andá a "Configurar Convenios".</div>;
+  }
 
   return (
-    <div className="max-w-350 mx-auto p-4 grid grid-cols-1 xl:grid-cols-12 gap-6 font-sans">
-      
-      {/* --- FORMULARIO LATERAL --- */}
-      <div className="xl:col-span-3 bg-white p-6 rounded-lg shadow-md border border-gray-200 overflow-y-auto max-h-[90vh]">
-        <h2 className="text-xl font-bold mb-4 text-gray-800 border-b pb-2">Datos del Recibo</h2>
-        
-        <div className="space-y-3 text-sm">
-          <div>
-            <label className="block font-medium text-gray-700">Convenio</label>
-            <select className="w-full p-2 border rounded" value={convenioId} onChange={(e) => setConvenioId(e.target.value)}>
-              {conveniosData.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+    <div className="mx-auto grid grid-cols-1 xl:grid-cols-12 gap-6">
+      {/* FORMULARIO */}
+      <div className="xl:col-span-4 bg-white p-6 rounded-lg shadow-md border border-gray-200 overflow-y-auto xl:max-h-[88vh]">
+        <h2 className="text-xl font-bold mb-4 text-gray-800">Datos del recibo</h2>
+
+        <Seccion titulo="Convenio">
+          <Campo label="Convenio aplicado" className="col-span-2">
+            <select className={claseInput} value={convenio.id} onChange={(e) => setConvenioId(e.target.value)}>
+              {convenios.map((c) => (
+                <option key={c.id} value={c.id}>{c.nombre}</option>
+              ))}
             </select>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div><label className="block font-medium">Empresa</label><input type="text" name="empresa" value={datos.empresa} onChange={handleChange} className="w-full p-2 border rounded"/></div>
-            <div><label className="block font-medium">CUIT</label><input type="text" name="cuit" value={datos.cuit} onChange={handleChange} className="w-full p-2 border rounded"/></div>
-            <div><label className="block font-medium">Mes</label><input type="text" name="mes" value={datos.mes} onChange={handleChange} className="w-full p-2 border rounded"/></div>
-            <div><label className="block font-medium">Año</label><input type="text" name="anio" value={datos.anio} onChange={handleChange} className="w-full p-2 border rounded"/></div>
-          </div>
-          <div><label className="block font-medium">Empleado</label><input type="text" name="empleado" value={datos.empleado} onChange={handleChange} className="w-full p-2 border rounded"/></div>
-          <div className="grid grid-cols-2 gap-2">
-            <div><label className="block font-medium">Legajo</label><input type="text" name="legajo" value={datos.legajo} onChange={handleChange} className="w-full p-2 border rounded"/></div>
-            <div><label className="block font-medium">CUIL</label><input type="text" name="cuil" value={datos.cuil} onChange={handleChange} className="w-full p-2 border rounded"/></div>
-            <div><label className="block font-medium">Fecha Ing.</label><input type="text" name="fechaIngreso" value={datos.fechaIngreso} onChange={handleChange} className="w-full p-2 border rounded"/></div>
-            <div><label className="block font-medium">Antigüedad</label><input type="text" name="antiguedad" value={datos.antiguedad} onChange={handleChange} className="w-full p-2 border rounded"/></div>
-          </div>
-          <div><label className="block font-medium">Categoría</label><input type="text" name="categoria" value={datos.categoria} onChange={handleChange} className="w-full p-2 border rounded"/></div>
-          <div><label className="block font-bold text-blue-700">Sueldo Bruto ($)</label><input type="number" name="bruto" value={datos.bruto} onChange={handleChange} className="w-full p-2 border-2 border-blue-400 rounded bg-blue-50"/></div>
-        </div>
+          </Campo>
+        </Seccion>
 
-        <button onClick={handleDescargar} disabled={!liquidacion.valido || !datos.empleado} className="w-full mt-6 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-md flex items-center justify-center gap-2">
-          <Download size={20} /> Generar PDF
-        </button>
+        <Seccion titulo="Sueldo">
+          <Campo label={porHora ? "Valor hora ($)" : "Sueldo básico mensual ($)"}>
+            <input {...numero("valorBasico")} />
+          </Campo>
+          <Campo label={porHora ? "Horas trabajadas" : "Días trabajados (de 30)"}>
+            <input {...numero("unidades")} />
+          </Campo>
+          <Campo
+            label={`Base de adicionales ${porHora ? "(valor hora)" : "(mensual)"} — opcional`}
+            className="col-span-2"
+          >
+            <input {...numero("baseAdicionales")} placeholder="Vacío = se usa el sueldo básico" />
+          </Campo>
+          {fijosEditables.map((r) => (
+            <Campo key={r.id} label={`${r.nombre} ($ fijo)`} className="col-span-2">
+              <input
+                type="number"
+                min={0}
+                step="any"
+                className={claseInput}
+                placeholder={String(r.montoFijo)}
+                value={datos.montosFijos[r.id] ?? ""}
+                onChange={(e) =>
+                  setDatos((prev) => ({
+                    ...prev,
+                    montosFijos: {
+                      ...prev.montosFijos,
+                      [r.id]: e.target.value === "" ? "" : Number(e.target.value),
+                    },
+                  }))
+                }
+              />
+            </Campo>
+          ))}
+        </Seccion>
+
+        <Seccion titulo="Empleado">
+          <Campo label="Apellido y nombre" className="col-span-2"><input {...texto("empleado")} /></Campo>
+          <Campo label="N° legajo"><input {...texto("legajo")} /></Campo>
+          <Campo label="C.U.I.L."><input {...texto("cuil")} /></Campo>
+          <Campo label="Fecha de ingreso">
+            <input type="date" value={datos.fechaIngreso} onChange={(e) => set("fechaIngreso", e.target.value)} className={claseInput} />
+          </Campo>
+          <Campo label="Antigüedad"><input {...texto("antiguedad")} /></Campo>
+          <Campo label="Categoría laboral" className="col-span-2"><input {...texto("categoria")} /></Campo>
+        </Seccion>
+
+        <Seccion titulo="Período y pago">
+          <Campo label="Mes">
+            <select className={claseInput} value={datos.mes} onChange={(e) => set("mes", e.target.value)}>
+              {MESES_ANIO.map((m) => <option key={m}>{m}</option>)}
+            </select>
+          </Campo>
+          <Campo label="Año"><input {...texto("anio")} /></Campo>
+          <Campo label="Q."><input {...texto("q")} /></Campo>
+          <Campo label="Banco"><input {...texto("banco")} /></Campo>
+          <Campo label="Fecha pago de aportes">
+            <input type="date" value={datos.fechaPagoAportes} onChange={(e) => set("fechaPagoAportes", e.target.value)} className={claseInput} />
+          </Campo>
+          <Campo label="Fecha del recibo">
+            <input type="date" value={datos.fechaEmision} onChange={(e) => set("fechaEmision", e.target.value)} className={claseInput} />
+          </Campo>
+        </Seccion>
+
+        <Seccion titulo="Empresa">
+          <Campo label="Razón social" className="col-span-2"><input {...texto("empresa")} /></Campo>
+          <Campo label="Domicilio" className="col-span-2"><input {...texto("domicilio")} /></Campo>
+          <Campo label="C.U.I.T."><input {...texto("cuit")} /></Campo>
+          <Campo label="Lugar de emisión"><input {...texto("lugar")} /></Campo>
+        </Seccion>
       </div>
 
-      {/* --- VISTA PREVIA DEL RECIBO --- */}
-      <div className="xl:col-span-9 bg-gray-50 p-4 flex justify-center overflow-x-auto">
-        <div id="recibo-imprimible" className="bg-white w-225 min-w-225 shadow-xl p-6 border border-gray-300 text-xs text-black" style={{ fontFamily: 'Arial, sans-serif' }}>
-          
-          {/* Encabezado Empresa */}
-          <div className="border border-black p-2 font-bold uppercase mb-2">
-            <div>EMPRESA: {datos.empresa}</div>
-            <div>C.U.I.T. EMPRESA: {datos.cuit}</div>
-          </div>
+      {/* VISTA PREVIA + DESCARGA */}
+      <div className="xl:col-span-8 flex flex-col gap-4">
+        <div className="bg-white p-4 rounded-lg shadow-md border border-gray-200 flex flex-wrap items-center gap-6">
+          {liquidacion.valido ? (
+            <>
+              <Dato titulo="Bruto" valor={formatearMoneda(liquidacion.bruto)} />
+              <Dato titulo="Descuentos" valor={formatearMoneda(liquidacion.totalDescuentos)} />
+              <Dato titulo="Neto" valor={formatearMoneda(liquidacion.neto)} destacado />
+              <Dato titulo="Costo empleador" valor={formatearMoneda(liquidacion.costoTotalEmpleador)} />
+            </>
+          ) : (
+            <span className="text-sm text-gray-500">Cargá el sueldo y las {porHora ? "horas" : "días"} trabajados para ver el recibo.</span>
+          )}
+          <button
+            onClick={descargar}
+            disabled={!liquidacion.valido || !datos.empleado}
+            className="ml-auto bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white font-semibold py-2.5 px-5 rounded-md flex items-center gap-2"
+          >
+            <Download size={18} /> Descargar PDF
+          </button>
+        </div>
 
-          {/* Tabla de Datos del Empleado */}
-          <table className="w-full border-collapse border border-black text-center mb-4">
-            <thead>
-              <tr className="bg-gray-200 text-[11px]">
-                <th className="border border-black p-1">MES</th>
-                <th className="border border-black p-1">AÑO</th>
-                <th className="border border-black p-1">APELLIDO Y NOMBRE</th>
-                <th className="border border-black p-1">Nº LEGAJO</th>
-                <th className="border border-black p-1">SUELDO BRUTO</th>
-                <th className="border border-black p-1">ANTIGÜEDAD</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td className="border border-black p-1">{datos.mes}</td>
-                <td className="border border-black p-1">{datos.anio}</td>
-                <td className="border border-black p-1 font-bold">{datos.empleado}</td>
-                <td className="border border-black p-1">{datos.legajo}</td>
-                <td className="border border-black p-1 font-bold">{formatearMoneda(Number(datos.bruto))}</td>
-                <td className="border border-black p-1">{datos.antiguedad}</td>
-              </tr>
-              <tr className="bg-gray-200 text-[11px] font-bold">
-                <td className="border border-black p-1" colSpan={2}>FECHA INGRESO</td>
-                <td className="border border-black p-1" colSpan={2}>CATEGORÍA LABORAL</td>
-                <td className="border border-black p-1" colSpan={2}>C.U.I.L.</td>
-              </tr>
-              <tr>
-                <td className="border border-black p-1" colSpan={2}>{datos.fechaIngreso}</td>
-                <td className="border border-black p-1" colSpan={2}>{datos.categoria}</td>
-                <td className="border border-black p-1" colSpan={2}>{datos.cuil}</td>
-              </tr>
-            </tbody>
-          </table>
-
-          {/* Sección 1: Costo Empleador */}
-          <table className="w-full border-collapse border border-black mb-1">
-            <thead>
-              <tr className="bg-gray-300 font-bold">
-                <th colSpan={4} className="border border-black p-1 text-center text-sm">COSTO TOTAL EMPLEADOR <span className="float-right mr-2">{formatearMoneda(liquidacion.costoTotalEmpleador)}</span></th>
-              </tr>
-              <tr className="bg-gray-200 text-[11px]">
-                <th className="border border-black p-1 w-1/2">CONCEPTO</th>
-                <th className="border border-black p-1 w-1/6">UNIDAD</th>
-                <th className="border border-black p-1 w-1/6">BASE</th>
-                <th className="border border-black p-1 w-1/6">MONTO</th>
-              </tr>
-            </thead>
-            <tbody>
-              {aportesPatronales.map((item, idx) => (
-                <tr key={idx}>
-                  <td className="border-l border-r border-black p-1 pl-2">{item.nombre}</td>
-                  <td className="border-l border-r border-black p-1 text-center">{item.porcentaje}%</td>
-                  <td className="border-l border-r border-black p-1 text-right"></td>
-                  <td className="border-l border-r border-black p-1 text-right">{formatearMoneda(item.montoDecimal)}</td>
-                </tr>
-              ))}
-              <tr><td className="border-l border-r border-black p-4"></td><td className="border-l border-r border-black"></td><td className="border-l border-r border-black"></td><td className="border-l border-r border-black"></td></tr>
-            </tbody>
-            <tfoot>
-              <tr className="bg-gray-200 font-bold border-t border-black">
-                <td colSpan={3} className="border border-black p-1 text-center">SUB TOTAL CONTRIBUCIONES EMPLEADOR</td>
-                <td className="border border-black p-1 text-right">{formatearMoneda(liquidacion.totalAportesPatronales)}</td>
-              </tr>
-            </tfoot>
-          </table>
-
-          {/* Sección 2: Sueldo Bruto y Descuentos */}
-          <table className="w-full border-collapse border border-black mb-1">
-            <thead>
-              <tr className="bg-gray-300 font-bold">
-                <th colSpan={3} className="border border-black p-1 text-center text-sm">SUELDO BRUTO</th>
-                <th className="border border-black p-1 text-right text-sm">{formatearMoneda(liquidacion.brutoTotal)}</th>
-              </tr>
-              <tr className="bg-gray-200 text-[11px]">
-                <th className="border border-black p-1 w-1/2">CONCEPTO</th>
-                <th className="border border-black p-1 w-1/6">UNIDAD</th>
-                <th className="border border-black p-1 w-1/6">BASE</th>
-                <th className="border border-black p-1 w-1/6">MONTO</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td className="border-l border-r border-black p-1 pl-2 font-bold">Sueldo Básico</td>
-                <td className="border-l border-r border-black p-1 text-center">30 d</td>
-                <td className="border-l border-r border-black p-1 text-right"></td>
-                <td className="border-l border-r border-black p-1 text-right">{formatearMoneda(liquidacion.brutoTotal)}</td>
-              </tr>
-              {descuentos.map((item, idx) => (
-                <tr key={idx}>
-                  <td className="border-l border-r border-black p-1 pl-2 text-gray-700">{item.nombre}</td>
-                  <td className="border-l border-r border-black p-1 text-center">{item.porcentaje}%</td>
-                  <td className="border-l border-r border-black p-1 text-right"></td>
-                  <td className="border-l border-r border-black p-1 text-right">{formatearMoneda(item.montoDecimal)}</td>
-                </tr>
-              ))}
-              <tr><td className="border-l border-r border-black p-6"></td><td className="border-l border-r border-black"></td><td className="border-l border-r border-black"></td><td className="border-l border-r border-black"></td></tr>
-            </tbody>
-            <tfoot>
-              <tr className="bg-gray-200 font-bold border-t border-black">
-                <td colSpan={2} className="border border-black p-1">COMPOSICIÓN SALARIAL:</td>
-                <td className="border border-black p-1 text-center">Descuentos:</td>
-                <td className="border border-black p-1 text-right text-red-600">{formatearMoneda(liquidacion.totalDescuentos)}</td>
-              </tr>
-              <tr className="bg-gray-300 font-bold text-sm">
-                <td colSpan={3} className="border border-black p-2 text-center uppercase">Sueldo Neto $</td>
-                <td className="border border-black p-2 text-right text-blue-900">{formatearMoneda(liquidacion.netoTotal)}</td>
-              </tr>
-            </tfoot>
-          </table>
-
-          {/* Sección 3: Detalles y Gráfico */}
-          <div className="grid grid-cols-2 gap-4 mt-4 h-64 border border-black p-2">
-            <div className="text-[11px]">
-              <h3 className="font-bold text-center underline mb-4 text-sm">Detalle de la composición salarial</h3>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2 px-4">
-                <div><span className="font-bold">Total Costo Empleador:</span></div> <div className="text-right">{formatearMoneda(liquidacion.costoTotalEmpleador)}</div>
-                <div>Sueldo Bruto:</div> <div className="text-right">{formatearMoneda(liquidacion.brutoTotal)}</div>
-                <div>Contribuciones Patronales:</div> <div className="text-right">{formatearMoneda(liquidacion.totalAportesPatronales)}</div>
-                <div className="col-span-2 border-b border-gray-400 my-1"></div>
-                <div><span className="font-bold">Sueldo Neto Trabajador:</span></div> <div className="text-right font-bold text-blue-700">{formatearMoneda(liquidacion.netoTotal)}</div>
-                <div>Total Descuentos:</div> <div className="text-right text-red-600">{formatearMoneda(liquidacion.totalDescuentos)}</div>
-              </div>
-            </div>
-            
-            <div className="flex flex-col items-center">
-              <h3 className="font-bold text-sm">Costo total empleador</h3>
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={datosGrafico} cx="50%" cy="50%" outerRadius={70} dataKey="value" isAnimationActive={false}>
-                    {datosGrafico.map((_, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORES[index % COLORES.length]} />
-                    ))}
-                  </Pie>
-                  {/* Solución de tipado al formateador del Tooltip */}
-                  <Tooltip formatter={(value: any) => formatearMoneda(Number(value))} />
-                  <Legend wrapperStyle={{ fontSize: '10px' }} />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
+        {vistaPreviaPDF && (
+          <a href={vistaPreviaPDF} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline -mb-2">
+            ¿No ves la vista previa? Abrir el PDF en una pestaña nueva
+          </a>
+        )}
+        <div className="bg-gray-200 rounded-lg border border-gray-300 overflow-hidden h-[80vh]">
+          {vistaPreviaPDF ? (
+            <iframe title="Vista previa del recibo" src={`${vistaPreviaPDF}#view=FitH`} className="w-full h-full bg-white" />
+          ) : (
+            <div className="h-full flex items-center justify-center text-gray-500 text-sm">Sin vista previa</div>
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function Dato({ titulo, valor, destacado = false }: { titulo: string; valor: string; destacado?: boolean }) {
+  return (
+    <div>
+      <div className="text-xs text-gray-500">{titulo}</div>
+      <div className={destacado ? "text-lg font-bold text-blue-800" : "text-base font-semibold text-gray-800"}>{valor}</div>
     </div>
   );
 }
